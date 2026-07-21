@@ -2,9 +2,11 @@
 
 namespace Yajra\DataTables\Html;
 
+use Closure;
 use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Traits\ForwardsCalls;
 use ReflectionClass;
+use ReflectionFunction;
 use Yajra\DataTables\Contracts\DataTableHtmlBuilder;
 use Yajra\DataTables\Html\Editor\Editor;
 
@@ -18,15 +20,47 @@ abstract class DataTableHtml implements DataTableHtmlBuilder
 
     public static function make(): Builder
     {
+        $arguments = func_get_args();
+
         /** @var static $html */
-        $html = app(static::class, self::normalizeParameters(func_get_args()));
+        $html = self::hasVariadicConstructor()
+            ? self::resolveVariadic($arguments)
+            : app(static::class, self::normalizeParameters($arguments));
 
         return $html->handle();
     }
 
+    private static function hasVariadicConstructor(): bool
+    {
+        foreach (self::constructorParameters() as $parameter) {
+            if ($parameter->isVariadic()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function resolveVariadic(array $arguments): static
+    {
+        $container = app();
+        $reflection = new ReflectionClass(self::concreteClass());
+        $resolver = fn (): object => $reflection->newInstanceArgs($arguments);
+        $abstract = static::class.'@'.spl_object_hash($resolver);
+
+        $container->bind($abstract, $resolver);
+
+        try {
+            /** @var static */
+            return $container->make($abstract);
+        } finally {
+            unset($container[$abstract]);
+        }
+    }
+
     private static function normalizeParameters(array $arguments): array
     {
-        $constructorParameters = (new ReflectionClass(static::class))->getConstructor()?->getParameters() ?? [];
+        $constructorParameters = self::constructorParameters();
         $parameters = [];
 
         foreach ($arguments as $index => $argument) {
@@ -38,6 +72,23 @@ abstract class DataTableHtml implements DataTableHtmlBuilder
         }
 
         return $parameters;
+    }
+
+    private static function constructorParameters(): array
+    {
+        return (new ReflectionClass(self::concreteClass()))->getConstructor()?->getParameters() ?? [];
+    }
+
+    private static function concreteClass(): string
+    {
+        $binding = app()->getBindings()[static::class]['concrete'] ?? null;
+        $concrete = $binding instanceof Closure
+            ? (new ReflectionFunction($binding))->getStaticVariables()['concrete'] ?? static::class
+            : static::class;
+
+        return is_string($concrete) && is_a($concrete, static::class, true)
+            ? $concrete
+            : static::class;
     }
 
     /**
