@@ -4,6 +4,7 @@ namespace Yajra\DataTables\Html;
 
 use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Traits\ForwardsCalls;
+use ReflectionClass;
 use Yajra\DataTables\Contracts\DataTableHtmlBuilder;
 use Yajra\DataTables\Html\Editor\Editor;
 
@@ -17,14 +18,26 @@ abstract class DataTableHtml implements DataTableHtmlBuilder
 
     public static function make(): Builder
     {
-        if (func_get_args()) {
-            return (new static(...func_get_args()))->handle();
-        }
-
         /** @var static $html */
-        $html = app(static::class);
+        $html = app(static::class, self::normalizeParameters(func_get_args()));
 
         return $html->handle();
+    }
+
+    private static function normalizeParameters(array $arguments): array
+    {
+        $constructorParameters = (new ReflectionClass(static::class))->getConstructor()?->getParameters() ?? [];
+        $parameters = [];
+
+        foreach ($arguments as $index => $argument) {
+            if (! isset($constructorParameters[$index])) {
+                break;
+            }
+
+            $parameters[$constructorParameters[$index]->getName()] = $argument;
+        }
+
+        return $parameters;
     }
 
     /**
